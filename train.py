@@ -24,6 +24,8 @@ if __name__ == '__main__':
                         help='number of steps per epoch')
     parser.add_argument('-e', '--num_epochs', default=100, type=int,
                         help='number of training epochs')
+    parser.add_argument('-c', '--only_cpu', default=False, action='store_true',
+                        help='if set, only build weights on cpu')
 
     args = parser.parse_args()
 
@@ -41,7 +43,7 @@ if __name__ == '__main__':
                               seq_len=args.seq_len)
 
     sess = tf.Session()
-    model = SeqGAN(sess, num_classes, only_cpu=True)
+    model = SeqGAN(sess, num_classes, only_cpu=args.only_cpu)
     model.build()
 
     for epoch in xrange(args.num_epochs):
