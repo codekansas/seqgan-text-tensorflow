@@ -1,0 +1,13 @@
+# .gitignore
+
+# python
+*.pyc
+
+# large files
+*.pkl
+model/
+
+# venvs
+venv/
+ENV/
+
