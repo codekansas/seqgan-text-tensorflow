@@ -182,7 +182,7 @@ class SeqGAN(object):
                 encoder_state=encoder_state,
                 embeddings=embeddings,
                 start_of_sequence_id=utils.START_IDX,
-                end_of_sequence_id=utils.END_IDX,
+                end_of_sequence_id=-1,
                 maximum_length=self.text_len_pl - 1,
                 num_decoder_symbols=self.num_classes,
                 name='decoder_inference_fn')
@@ -190,6 +190,8 @@ class SeqGAN(object):
             generated_sequence, _, _ = tf.contrib.seq2seq.dynamic_rnn_decoder(
                 cell=cell,
                 decoder_fn=infer_fn)
+
+            generatd_sequence = tf.nn.softmax(generated_sequence)
 
             generator_weights = get_scope_variables(scope)
 
