@@ -6,9 +6,10 @@ import warnings
 import numpy as np
 import tensorflow as tf
 
-from keras.optimizers import Adam
-
 import utils
+
+# Defines the maximum length of a training sequence.
+SEQUENCE_MAXLEN = 1000
 
 
 def check_built(f):
@@ -28,7 +29,6 @@ def get_scope_variables(scope):
     Returns:
         list of variables.
     """
-
     return tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope=scope)
 
 
@@ -91,6 +91,8 @@ class SeqGAN(object):
         self._latent_pl = tf.placeholder(
             dtype='float32', shape=(None, num_latent), name='latent_pl')
         self._time = tf.Variable(0, name='time')
+        self._sample_pl = tf.placeholder(
+            dtype='bool', shape=(), name='sample_pl')
 
     @property
     def num_classes(self):
@@ -103,6 +105,10 @@ class SeqGAN(object):
     @property
     def text_len_pl(self):
         return self._text_len_pl
+
+    @property
+    def sample_pl(self):
+        return self._sample_pl
 
     @property
     def latent_pl(self):
@@ -181,7 +187,7 @@ class SeqGAN(object):
 
         return weight
 
-    def build_generator(self, use_multinomial=True, num_rnns=3, rnn_dims=128):
+    def build_generator(self, use_multinomial=False, num_rnns=3, rnn_dims=128):
         """Builds the generator part of the model.
         Args:
             use_multinomial: bool (default: True), whether or not to sample
@@ -248,7 +254,10 @@ class SeqGAN(object):
 
                     else:
                         output_var = output_fn(output_var)
-                        next_id = multinomial_2d(output_var)
+                        next_id = tf.cond(
+                            self.sample_pl,
+                            lambda: tf.argmax(output_var, axis=-1),
+                            lambda: multinomial_2d(output_var))
 
                     next_input = tf.one_hot(next_id, self.num_classes)
                     done = tf.cond(tf.greater_equal(time, self.text_len_pl),
@@ -380,25 +389,33 @@ class SeqGAN(object):
 
             # Creates the optimizer.
             generator_opt = tf.train.AdamOptimizer(1e-4)
+            reward_opt = tf.train.GradientDescentOptimizer(1e-3)
 
-            # This variable represents the mask of what the model ended up
-            # choosing. We want to ignore any of the output values that it
-            # didn't choose, and either increase or decrease the probability
-            # of the states in `g_sequence` depending on whether or not the
-            # reward was good or bad.
+            # Masks the predictions.
             g_sequence = tf.one_hot(g_sequence, self.num_classes)
+            g_preds = tf.clip_by_value(g_preds * g_sequence, 1e-20, 1)
 
-            # This is the actual tensor representing the class predictions.
-            # We'll apply `g_sequence` as a mask to ignore the non-important
-            # parts.
-            g_preds = tf.clip_by_value(g_preds, 1e-20, 1.)
+            # Keeps track of the "expected reward" at each timestep.
+            expected_reward = tf.Variable(tf.zeros((SEQUENCE_MAXLEN,)))
+            reward = d_preds - expected_reward[:tf.shape(d_preds)[1]]
+            mean_reward = tf.reduce_mean(reward)
 
-            # The actual "reward" is the output of the discriminator. If the
-            # discriminator liked the values it saw, increase the probability of
-            # those classes.
-            gen_reward = g_sequence * g_preds * d_preds
-            gen_loss = -tf.reduce_mean(gen_reward)
-            tf.summary.scalar('reward', gen_loss)
+            # This variable is updated to know the "expected reward". This means
+            # that only results that do surprisingly well are "kept" and used
+            # to update the generator.
+            exp_reward_loss = tf.reduce_mean(tf.abs(reward))
+            exp_op = reward_opt.minimize(
+                exp_reward_loss, var_list=[expected_reward])
+
+            # The generator tries to maximize the outputs that lead to a high
+            # reward value. Any timesteps before the reward happened should
+            # recieve that reward (since it helped cause that reward).
+            reward = tf.expand_dims(tf.cumsum(reward, axis=1, reverse=True), -1)
+            gen_reward = tf.log(g_preds) * reward
+            gen_reward = tf.reduce_mean(gen_reward)
+
+            # Maximize the reward signal.
+            gen_loss = -gen_reward
 
             # Adds generator regularization loss.
             with tf.variable_scope('regularization'):
@@ -410,6 +427,12 @@ class SeqGAN(object):
             gen_op = generator_opt.minimize(total_loss, var_list=g_weights)
             tf.summary.scalar('total', total_loss)
 
+            gen_op = tf.group(gen_op, exp_op)
+
+        tf.summary.scalar('loss/expected_reward', exp_reward_loss)
+        tf.summary.scalar('reward/mean', mean_reward)
+        tf.summary.scalar('reward/generator', gen_reward)
+
         return gen_op
 
     def build(self, reg_loss=1e-4, use_teacher=True):
@@ -418,6 +441,9 @@ class SeqGAN(object):
             reg_loss: float, how much to weight regularization loss.
             use_teacher: bool, if set, use the teacher.
         """
+
+        if hasattr(self, '_built') and self._built:
+            raise RuntimeError('The model is already built.')
 
         g_classes, g_seq, teach_loss = self.build_generator()
         r_preds = self.build_discriminator(self.text_pl)
@@ -514,6 +540,7 @@ class SeqGAN(object):
             self.text_pl: batch,
             self.text_len_pl: seq_len,
             self.latent_pl: latent,
+            self.sample_pl: False,
         }
 
         t = self._sess.run(self.time)
@@ -534,5 +561,6 @@ class SeqGAN(object):
         latent = self._generate_latent_variable(1)
         sequence, = self._sess.run([self.generated_sequence],
                                    feed_dict={self.latent_pl: latent,
-                                              self.text_len_pl: sample_len})
+                                              self.text_len_pl: sample_len,
+                                              self.sample_pl: True})
         return sequence[0]

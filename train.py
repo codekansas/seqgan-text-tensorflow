@@ -36,14 +36,16 @@ if __name__ == '__main__':
                         help='the length of each training sequence')
     parser.add_argument('-b', '--batch_size', default=32, type=int,
                         help='size of each training batch')
-    parser.add_argument('-n', '--num_steps', default=1000, type=int,
+    parser.add_argument('-n', '--num_steps', default=100, type=int,
                         help='number of steps per epoch')
-    parser.add_argument('-e', '--num_epochs', default=100, type=int,
+    parser.add_argument('-e', '--num_epochs', default=1000, type=int,
                         help='number of training epochs')
     parser.add_argument('-c', '--only_cpu', default=False, action='store_true',
                         help='if set, only build weights on cpu')
     parser.add_argument('-p', '--learn_phase', default=None, type=int,
                         help='learning phase (None for synchronized)')
+    parser.add_argument('-d', '--logdir', default='model/', type=str,
+                        help='where to store the trained model')
 
     args = parser.parse_args()
 
@@ -63,19 +65,20 @@ if __name__ == '__main__':
     sess = tf.Session()
     model = SeqGAN(sess,
                    num_classes,
+                   logdir=args.logdir,
                    learn_phase=args.learn_phase,
                    only_cpu=args.only_cpu)
     model.build()
     model.load(ignore_missing=True)
 
     for epoch in xrange(1, args.num_epochs + 1):
-        for step in xrange(args.num_steps):
+        for step in xrange(1, args.num_steps + 1):
             logging.info('epoch %d, step %d', epoch, step)
             model.train_batch(iterator.next())
 
         # Generates a sample from the model.
-        g = model.generate(args.seq_len)
-        logging.info('epoch %d: "%s"', epoch, utils.detokenize(g, rev_dict))
+        g = model.generate(1000)
+        print(utils.detokenize(g, rev_dict))
 
         # Saves the model to the logdir.
         model.save()
