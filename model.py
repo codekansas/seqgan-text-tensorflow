@@ -154,17 +154,22 @@ class SeqGAN(object):
         if weight_val is None:
             init = init.lower()
             if init == 'normal':
-                weight_val = tf.random_normal(shape, stddev=0.05)
+                initializer = (lambda shape, dtype, partition_info:
+                               tf.random_normal(shape, stddev=0.05))
             elif init == 'uniform':
-                weight_val = tf.random_uniform(shape, maxval=0.05)
+                initializer = (lambda shape, dtype, partition_info:
+                               tf.random_uniform(shape, stddev=0.05))
             elif init == 'glorot':
-                stddev = np.sqrt(6. / sum(shape))
-                weight_val = tf.random_normal(shape, stddev=stddev)
+                initializer = (lambda shape, dtype, partition_info:
+                               tf.random_normal(
+                                   shape, stddev=np.sqrt(6. / sum(shape))))
             elif init == 'eye':
                 assert all(i == shape[0] for i in shape)
-                weight_val = tf.eye(shape[0])
+                initializer = (lambda shape, dtype, partition_info:
+                               tf.eye(shape[0]))
             elif init == 'zero':
-                weight_val = tf.zeros(shape)
+                initializer = (lambda shape, dtype, partition_info:
+                               tf.zeros(shape))
             else:
                 raise ValueError('Invalid init: "%s"' % init)
         else:
@@ -182,7 +187,10 @@ class SeqGAN(object):
             on_gpu = False
 
         with tf.device('/gpu:0' if on_gpu else '/cpu:0'):
-            weight = tf.Variable(weight_val, name=name, trainable=trainable)
+            weight = tf.get_variable(name=name,
+                                     shape=shape,
+                                     initializer=initializer,
+                                     trainable=trainable)
         self._weights.append(weight)
 
         return weight
@@ -299,6 +307,7 @@ class SeqGAN(object):
             reuse: bool (default: False), if set, reuse variable weights.
             num_rnns: int, number of RNNs to stack.
                 of the model.
+            rnn_dims: int, number of dimensions in each RNN.
         Returns:
             a tensor with shape (batch_size) that predicts whether the input
                 tensor is real or fake.
@@ -435,11 +444,10 @@ class SeqGAN(object):
 
         return gen_op
 
-    def build(self, reg_loss=1e-4, use_teacher=True):
+    def build(self, reg_loss=1e-4):
         """Builds the model.
         Args:
             reg_loss: float, how much to weight regularization loss.
-            use_teacher: bool, if set, use the teacher.
         """
 
         if hasattr(self, '_built') and self._built:
@@ -456,6 +464,9 @@ class SeqGAN(object):
         tf.summary.histogram('predictions/fake', g_preds)
         tf.summary.histogram('predictions/real', r_preds)
 
+        # Saves predictions for analysis later.
+        self.g_preds, self.r_preds = g_preds, r_preds
+
         # Captures the generated sequence to use later.
         self.generated_sequence = g_seq
 
@@ -464,13 +475,12 @@ class SeqGAN(object):
         gen_op = self.get_generator_op(g_seq, g_preds, g_classes, g_weights)
 
         # Adds the teacher forcing part, decaying at some rate.
-        if use_teacher:
-            teach_lr = 10000. / (10000. + tf.cast(self.time, 'float32'))
-            teach_lr *= 1e-3
-            teach_opt = tf.train.AdamOptimizer(teach_lr)
-            teach_op = teach_opt.minimize(teach_loss)
-            gen_op = tf.group(gen_op, teach_op)
-            tf.summary.scalar('teacher_lr', teach_lr)
+        teach_lr = 10000. / (10000. + tf.cast(self.time, 'float32'))
+        teach_lr *= 1e-3
+        teach_opt = tf.train.AdamOptimizer(teach_lr)
+        teach_op = teach_opt.minimize(teach_loss)
+        gen_op = tf.group(gen_op, teach_op)
+        tf.summary.scalar('teacher_lr', teach_lr)
 
         # Creates op to update time.
         step_op = self.time.assign(self.time + 1)
@@ -498,7 +508,6 @@ class SeqGAN(object):
         self._saver = tf.train.Saver()
         self._sess.run(tf.global_variables_initializer())
         self._built = True
-
 
     @check_built
     def load(self, ignore_missing=False):
