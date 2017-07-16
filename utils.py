@@ -68,7 +68,7 @@ def tokenize(fpath, dictionary, batch_size=32, seq_len=50):
     idxs = np.arange(0, len(all_text) - seq_len)
 
     while True:
-        batch_idxs = np.random.choice(idxs, size=(seq_len,), replace=False)
+        batch_idxs = np.random.choice(idxs, size=(batch_size,), replace=False)
         texts = [all_text[i:i + seq_len] for i in batch_idxs]
         tokens = [[dictionary[i] for i in text] for text in texts]
         yield np.asarray(tokens)
