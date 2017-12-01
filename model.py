@@ -201,8 +201,8 @@ class SeqGAN(object):
             use_multinomial: bool (default: True), whether or not to sample
                 from a multinomial distribution for each consecutive step of
                 the RNN.
-            num_rnns: int (default: 128), number of RNNs to stack.
-            rnn_dims: int (default: 3), number of outputs of the RNN.
+            num_rnns: int (default: 3), number of RNNs to stack.
+            rnn_dims: int (default: 128), number of outputs of the RNN.
         Returns:
             a tensor representing the generated question.
         """
